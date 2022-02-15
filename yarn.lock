@@ -6322,9 +6322,9 @@ floggy@^0.3.1:
     strip-ansi "6"
 
 follow-redirects@^1.14.0:
-  version "1.14.7"
-  resolved "https://registry.yarnpkg.com/follow-redirects/-/follow-redirects-1.14.7.tgz#2004c02eb9436eee9a21446a6477debf17e81685"
-  integrity sha512-+hbxoLbFMbRKDwohX8GkTataGqO6Jb7jGwpAlwgy2bIz25XtRm7KEzJM76R1WiNT5SwZkX4Y75SwBolkpmE7iQ==
+  version "1.14.8"
+  resolved "https://registry.yarnpkg.com/follow-redirects/-/follow-redirects-1.14.8.tgz#016996fb9a11a100566398b1c6839337d7bfa8fc"
+  integrity sha512-1x0S9UVJHsQprFcEC/qnNzBLcIxsjAV905f/UkQxbclCsoTWlacCNOpQa/anodLl2uaEKFhfWOvM2Qg77+15zA==
 
 for-in@^1.0.2:
   version "1.0.2"
@@ -12172,9 +12172,9 @@ stylis@3.5.4:
   integrity sha512-8/3pSmthWM7lsPBKv7NXkzn2Uc9W7NotcwGNpJaa3k7WMM1XDCA4MgT5k/8BIexd5ydZdboXtU90XH9Ec4Bv/Q==
 
 superjson@^1.7.4:
-  version "1.8.0"
-  resolved "https://registry.yarnpkg.com/superjson/-/superjson-1.8.0.tgz#a002521450aaa1529feef65fc1dc314e47cc0598"
-  integrity sha512-8FWCa0T9JQ9kVax9nmRqEEebhbRGmU3IV1gevZWQGJRFmSNVN4hnyfb0858aWeEOoS3atwnhjYGleRQHTGI/lA==
+  version "1.8.1"
+  resolved "https://registry.yarnpkg.com/superjson/-/superjson-1.8.1.tgz#c0fe510b8ff71c3bde5733a125623994ca9ec608"
+  integrity sha512-RaBKdbsYj29Ky+XcdE11pJAyKXPrqiCV269koH2WAlpeHh/9qnK0ET84GiVWvnutiufyDolK/vS2jtdFYr341w==
   dependencies:
     debug "^4.3.1"
     lodash.clonedeep "^4.5.0"
