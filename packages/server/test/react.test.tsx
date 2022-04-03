@@ -46,11 +46,12 @@ type Post = {
   title: string;
   createdAt: number;
 };
+type Database = {
+  posts: Post[];
+};
 
 function createAppRouter() {
-  const db: {
-    posts: Post[];
-  } = {
+  const db: Database = {
     posts: [
       { id: '1', title: 'first post', createdAt: 0 },
       { id: '2', title: 'second post', createdAt: 1 },
@@ -67,9 +68,7 @@ function createAppRouter() {
       return {
         $test: 'formatted',
         zodError:
-          error.cause instanceof ZodError
-            ? error.cause.flatten()
-            : null,
+          error.cause instanceof ZodError ? error.cause.flatten() : null,
         ...shape,
       };
     })
@@ -264,32 +263,26 @@ afterEach(() => {
 
 describe('useQuery()', () => {
   test('no input', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
       expectTypeOf(allPostsQuery.data!).toMatchTypeOf<Post[]>();
 
       return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
     });
   });
 
   test('with operation context', async () => {
-    const { trpc, client, linkSpy } = factory;
+    const { trpc, linkSpy, App } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         context: {
@@ -300,18 +293,12 @@ describe('useQuery()', () => {
 
       return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
     });
@@ -324,24 +311,18 @@ describe('useQuery()', () => {
   });
 
   test('with input', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['paginatedPosts', { limit: 1 }]);
 
       return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
     });
@@ -350,7 +331,7 @@ describe('useQuery()', () => {
 });
 
 test('mutation on mount + subscribe for it', async () => {
-  const { trpc, client } = factory;
+  const { trpc, App } = factory;
   function MyComponent() {
     const [posts, setPosts] = useState<Post[]>([]);
 
@@ -387,18 +368,12 @@ test('mutation on mount + subscribe for it', async () => {
 
     return <pre>{JSON.stringify(posts, null, 4)}</pre>;
   }
-  function App() {
-    const [queryClient] = useState(() => new QueryClient());
-    return (
-      <trpc.Provider {...{ queryClient, client }}>
-        <QueryClientProvider client={queryClient}>
-          <MyComponent />
-        </QueryClientProvider>
-      </trpc.Provider>
-    );
-  }
 
-  const utils = render(<App />);
+  const utils = render(
+    <App>
+      <MyComponent />
+    </App>,
+  );
   await waitFor(() => {
     expect(utils.container).toHaveTextContent('first post');
   });
@@ -409,7 +384,7 @@ test('mutation on mount + subscribe for it', async () => {
 
 describe('useMutation()', () => {
   test('call procedure with no input with null/undefined', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
 
     const results: unknown[] = [];
     function MyComponent() {
@@ -449,18 +424,11 @@ describe('useMutation()', () => {
       );
     }
 
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
-
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('__IS_FINISHED__');
     });
@@ -468,7 +436,7 @@ describe('useMutation()', () => {
     // expect(results).toMatchInlineSnapshot();
   });
   test('nullish input called with no input', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
 
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
@@ -487,18 +455,11 @@ describe('useMutation()', () => {
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
-
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
     });
@@ -509,7 +470,7 @@ describe('useMutation()', () => {
   });
 
   test('useMutation([path]) tuple', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
 
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
@@ -528,18 +489,11 @@ describe('useMutation()', () => {
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
-
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
     });
@@ -550,7 +504,7 @@ describe('useMutation()', () => {
   });
 
   test('nullish input called with input', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
 
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
@@ -569,18 +523,11 @@ describe('useMutation()', () => {
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
-
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
       expect(utils.container).toHaveTextContent('second post');
@@ -709,7 +656,7 @@ test('dehydrate', async () => {
 });
 
 test('prefetchQuery', async () => {
-  const { trpc, client } = factory;
+  const { trpc, App } = factory;
   function MyComponent() {
     const [state, setState] = useState<string>('nope');
     const utils = trpc.useContext();
@@ -725,25 +672,19 @@ test('prefetchQuery', async () => {
 
     return <>{JSON.stringify(state)}</>;
   }
-  function App() {
-    const [queryClient] = useState(() => new QueryClient());
-    return (
-      <trpc.Provider {...{ queryClient, client }}>
-        <QueryClientProvider client={queryClient}>
-          <MyComponent />
-        </QueryClientProvider>
-      </trpc.Provider>
-    );
-  }
 
-  const utils = render(<App />);
+  const utils = render(
+    <App>
+      <MyComponent />
+    </App>,
+  );
   await waitFor(() => {
     expect(utils.container).toHaveTextContent('first post');
   });
 });
 
 test('useInfiniteQuery()', async () => {
-  const { trpc, client } = factory;
+  const { trpc, App } = factory;
 
   function MyComponent() {
     const q = trpc.useInfiniteQuery(
@@ -793,18 +734,12 @@ test('useInfiniteQuery()', async () => {
       </>
     );
   }
-  function App() {
-    const [queryClient] = useState(() => new QueryClient());
-    return (
-      <trpc.Provider {...{ queryClient, client }}>
-        <QueryClientProvider client={queryClient}>
-          <MyComponent />
-        </QueryClientProvider>
-      </trpc.Provider>
-    );
-  }
 
-  const utils = render(<App />);
+  const utils = render(
+    <App>
+      <MyComponent />
+    </App>,
+  );
   await waitFor(() => {
     expect(utils.container).toHaveTextContent('first post');
   });
@@ -845,7 +780,7 @@ test('useInfiniteQuery()', async () => {
 });
 
 test('useInfiniteQuery and prefetchInfiniteQuery', async () => {
-  const { trpc, client } = factory;
+  const { trpc, App } = factory;
 
   function MyComponent() {
     const trpcContext = trpc.useContext();
@@ -909,18 +844,12 @@ test('useInfiniteQuery and prefetchInfiniteQuery', async () => {
       </>
     );
   }
-  function App() {
-    const [queryClient] = useState(() => new QueryClient());
-    return (
-      <trpc.Provider {...{ queryClient, client }}>
-        <QueryClientProvider client={queryClient}>
-          <MyComponent />
-        </QueryClientProvider>
-      </trpc.Provider>
-    );
-  }
 
-  const utils = render(<App />);
+  const utils = render(
+    <App>
+      <MyComponent />
+    </App>,
+  );
   await waitFor(() => {
     expect(utils.container).toHaveTextContent('first post');
   });
@@ -980,7 +909,7 @@ test('useInfiniteQuery and prefetchInfiniteQuery', async () => {
 });
 
 test('useInfiniteQuery and fetchInfiniteQuery', async () => {
-  const { trpc, client } = factory;
+  const { trpc, App } = factory;
 
   function MyComponent() {
     const trpcContext = trpc.useContext();
@@ -1041,18 +970,12 @@ test('useInfiniteQuery and fetchInfiniteQuery', async () => {
       </>
     );
   }
-  function App() {
-    const [queryClient] = useState(() => new QueryClient());
-    return (
-      <trpc.Provider {...{ queryClient, client }}>
-        <QueryClientProvider client={queryClient}>
-          <MyComponent />
-        </QueryClientProvider>
-      </trpc.Provider>
-    );
-  }
 
-  const utils = render(<App />);
+  const utils = render(
+    <App>
+      <MyComponent />
+    </App>,
+  );
   await waitFor(() => {
     expect(utils.container).toHaveTextContent('first post');
   });
@@ -1131,7 +1054,7 @@ test('prefetchInfiniteQuery()', async () => {
 
 describe('invalidate queries', () => {
   test('queryClient.invalidateQueries()', async () => {
-    const { trpc, resolvers, client } = factory;
+    const { trpc, resolvers, App } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         staleTime: Infinity,
@@ -1161,18 +1084,12 @@ describe('invalidate queries', () => {
         </>
       );
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
 
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('postByIdQuery:success');
@@ -1201,7 +1118,7 @@ describe('invalidate queries', () => {
   });
 
   test('invalidateQuery()', async () => {
-    const { trpc, resolvers, client } = factory;
+    const { trpc, resolvers, App } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         staleTime: Infinity,
@@ -1230,18 +1147,12 @@ describe('invalidate queries', () => {
         </>
       );
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
 
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('postByIdQuery:success');
@@ -1269,7 +1180,7 @@ describe('invalidate queries', () => {
     expect(resolvers.postById).toHaveBeenCalledTimes(2);
   });
   test('invalidateQueries()', async () => {
-    const { trpc, resolvers, client } = factory;
+    const { trpc, resolvers, App } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         staleTime: Infinity,
@@ -1298,18 +1209,12 @@ describe('invalidate queries', () => {
         </>
       );
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
 
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('postByIdQuery:success');
@@ -1339,7 +1244,7 @@ describe('invalidate queries', () => {
 
   test('test invalidateQueries() with different args', async () => {
     // ref  https://github.com/trpc/trpc/issues/1383
-    const { trpc, resolvers, client } = factory;
+    const { trpc, resolvers, App } = factory;
     function MyComponent() {
       const postByIdQuery = trpc.useQuery(['postById', '1'], {
         staleTime: Infinity,
@@ -1391,18 +1296,12 @@ describe('invalidate queries', () => {
         </>
       );
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
 
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('postByIdQuery:success');
@@ -1434,7 +1333,7 @@ describe('invalidate queries', () => {
 });
 
 test('formatError() react types test', async () => {
-  const { trpc, client } = factory;
+  const { trpc, App } = factory;
   function MyComponent() {
     const mutation = trpc.useMutation('addPost');
 
@@ -1462,18 +1361,12 @@ test('formatError() react types test', async () => {
     }
     return <></>;
   }
-  function App() {
-    const [queryClient] = useState(() => new QueryClient());
-    return (
-      <trpc.Provider {...{ queryClient, client }}>
-        <QueryClientProvider client={queryClient}>
-          <MyComponent />
-        </QueryClientProvider>
-      </trpc.Provider>
-    );
-  }
 
-  const utils = render(<App />);
+  const utils = render(
+    <App>
+      <MyComponent />
+    </App>,
+  );
   await waitFor(() => {
     expect(utils.container).toHaveTextContent('fieldErrors');
     expect(utils.getByTestId('err').innerText).toMatchInlineSnapshot(
@@ -1907,7 +1800,7 @@ describe('withTRPC()', () => {
 
 describe('setQueryData()', () => {
   test('without & without callback', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
     function MyComponent() {
       const utils = trpc.useContext();
       const allPostsQuery = trpc.useQuery(['allPosts'], {
@@ -1958,18 +1851,12 @@ describe('setQueryData()', () => {
         </>
       );
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
 
     utils.getByTestId('setQueryData').click();
 
@@ -1982,7 +1869,7 @@ describe('setQueryData()', () => {
 
 describe('setInfiniteQueryData()', () => {
   test('with & without callback', async () => {
-    const { trpc, client } = factory;
+    const { trpc, App } = factory;
     function MyComponent() {
       const utils = trpc.useContext();
       const allPostsQuery = trpc.useInfiniteQuery(['paginatedPosts', {}], {
@@ -2050,18 +1937,12 @@ describe('setInfiniteQueryData()', () => {
         </>
       );
     }
-    function App() {
-      const [queryClient] = useState(() => new QueryClient());
-      return (
-        <trpc.Provider {...{ queryClient, client }}>
-          <QueryClientProvider client={queryClient}>
-            <MyComponent />
-          </QueryClientProvider>
-        </trpc.Provider>
-      );
-    }
 
-    const utils = render(<App />);
+    const utils = render(
+      <App>
+        <MyComponent />
+      </App>,
+    );
 
     utils.getByTestId('setInfiniteQueryData').click();
 
