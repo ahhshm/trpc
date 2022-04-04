@@ -11,18 +11,15 @@ import userEvent from '@testing-library/user-event';
 import { httpBatchLink } from '@trpc/client/links/httpBatchLink';
 import { expectTypeOf } from 'expect-type';
 import hash from 'hash-sum';
-import React, { Fragment, ReactNode, useEffect, useState } from 'react';
+import React, { Fragment, ReactElement, useEffect, useState } from 'react';
 import {
   QueryClient,
   QueryClientProvider,
   setLogger,
   useQueryClient,
 } from 'react-query';
-import { dehydrate } from 'react-query/hydration';
 import { z, ZodError } from 'zod';
-import { withTRPC } from '../../next/src';
 import { createReactQueryHooks, OutputWithCursor } from '../../react/src';
-import { createSSGHelpers } from '../../react/ssg';
 import { DefaultErrorShape } from '../src';
 import { routerToServerAndClient } from './_testHelpers';
 import {
@@ -31,7 +28,6 @@ import {
   TRPCWebSocketClient,
 } from '../../client/src/links/wsLink';
 import { splitLink } from '../../client/src/links/splitLink';
-import { AppType } from 'next/dist/shared/lib/utils';
 import { TRPCError } from '../src/TRPCError';
 
 setLogger({
@@ -89,6 +85,7 @@ function createAppRouter() {
         return post;
       },
     })
+    // TODO: refactor
     .query('paginatedPosts', {
       input: z.object({
         limit: z.number().min(1).max(100).nullish(),
@@ -225,18 +222,18 @@ function createAppRouter() {
   const queryClient = new QueryClient();
   const trpc = createReactQueryHooks<typeof appRouter>();
 
-  function App(props: { children: ReactNode }) {
-    const [queryClient] = useState(() => new QueryClient());
-    return (
+  function trpcRender(component: ReactElement) {
+    return render(
       <trpc.Provider {...{ queryClient, client }}>
         <QueryClientProvider client={queryClient}>
-          {props.children}
+          {component}
         </QueryClientProvider>
-      </trpc.Provider>
+      </trpc.Provider>,
     );
   }
+
   return {
-    App,
+    trpcRender,
     appRouter,
     trpc,
     close,
@@ -253,54 +250,56 @@ function createAppRouter() {
     linkSpy,
   };
 }
+
 let factory: ReturnType<typeof createAppRouter>;
 beforeEach(() => {
   factory = createAppRouter();
 });
+
 afterEach(() => {
   factory.close();
 });
 
-describe('useQuery()', () => {
+export const expectType = <T,>(_: T): void => undefined;
+
+describe('useQuery', () => {
+  it('should infer the return type currectly', () => {});
   test('no input', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
+
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
-      expectTypeOf(allPostsQuery.data!).toMatchTypeOf<Post[]>();
 
+      expectType<Post[]>(allPostsQuery.data!);
+      // expectTypeOf(allPostsQuery.data!).toMatchTypeOf<Post[]>();
       return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
+
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('first post');
+      expect(rendered.container).toHaveTextContent('first post');
     });
   });
 
-  test('with operation context', async () => {
-    const { trpc, linkSpy, App } = factory;
+  it('should allow to specify context', async () => {
+    const { trpc, linkSpy, trpcRender } = factory;
+
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         context: {
           test: '1',
         },
       });
-      expectTypeOf(allPostsQuery.data!).toMatchTypeOf<Post[]>();
 
+      expectTypeOf(allPostsQuery.data!).toMatchTypeOf<Post[]>();
       return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
+
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('first post');
+      expect(rendered.container).toHaveTextContent('first post');
     });
 
     expect(linkSpy.up).toHaveBeenCalledTimes(1);
@@ -311,80 +310,26 @@ describe('useQuery()', () => {
   });
 
   test('with input', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
+
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['paginatedPosts', { limit: 1 }]);
-
       return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
+
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('first post');
+      expect(rendered.container).toHaveTextContent('first post');
     });
-    expect(utils.container).not.toHaveTextContent('second post');
+
+    expect(rendered.container).not.toHaveTextContent('second post');
   });
 });
 
-test('mutation on mount + subscribe for it', async () => {
-  const { trpc, App } = factory;
-  function MyComponent() {
-    const [posts, setPosts] = useState<Post[]>([]);
-
-    const addPosts = (newPosts?: Post[]) => {
-      setPosts((nowPosts) => {
-        const map: Record<Post['id'], Post> = {};
-        for (const msg of nowPosts ?? []) {
-          map[msg.id] = msg;
-        }
-        for (const msg of newPosts ?? []) {
-          map[msg.id] = msg;
-        }
-        return Object.values(map);
-      });
-    };
-    const input = posts.reduce(
-      (num, post) => Math.max(num, post.createdAt),
-      -1,
-    );
-
-    trpc.useSubscription(['newPosts', input], {
-      onNext(post) {
-        addPosts([post]);
-      },
-    });
-
-    const mutation = trpc.useMutation('addPost');
-    const mutate = mutation.mutate;
-    useEffect(() => {
-      if (posts.length === 2) {
-        mutate({ title: 'third post' });
-      }
-    }, [posts.length, mutate]);
-
-    return <pre>{JSON.stringify(posts, null, 4)}</pre>;
-  }
-
-  const utils = render(
-    <App>
-      <MyComponent />
-    </App>,
-  );
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-  });
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('third post');
-  });
-});
-
-describe('useMutation()', () => {
+describe('useMutation', () => {
   test('call procedure with no input with null/undefined', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
 
     const results: unknown[] = [];
     function MyComponent() {
@@ -405,8 +350,8 @@ describe('useMutation()', () => {
           );
 
           await mutation.mutateAsync(null);
-
           await mutation.mutateAsync(undefined);
+
           setFinished(true);
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -424,19 +369,16 @@ describe('useMutation()', () => {
       );
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('__IS_FINISHED__');
+      expect(rendered.container).toHaveTextContent('__IS_FINISHED__');
     });
 
     // expect(results).toMatchInlineSnapshot();
   });
+
   test('nullish input called with no input', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
 
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
@@ -455,22 +397,20 @@ describe('useMutation()', () => {
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
+
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('first post');
+      expect(rendered.container).toHaveTextContent('first post');
     });
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('[]');
+      expect(rendered.container).toHaveTextContent('[]');
     });
   });
 
+  // TODO: i think it shouldn't exist
   test('useMutation([path]) tuple', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
 
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
@@ -489,22 +429,19 @@ describe('useMutation()', () => {
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const utils = trpcRender(<MyComponent />);
+
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
     });
-
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('[]');
     });
   });
 
+  // TODO: better message
   test('nullish input called with input', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
 
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
@@ -523,16 +460,12 @@ describe('useMutation()', () => {
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const utils = trpcRender(<MyComponent />);
+
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('first post');
       expect(utils.container).toHaveTextContent('second post');
     });
-
     await waitFor(() => {
       expect(utils.container).not.toHaveTextContent('first post');
       expect(utils.container).toHaveTextContent('second post');
@@ -540,7 +473,7 @@ describe('useMutation()', () => {
   });
 
   test('useMutation with context', async () => {
-    const { trpc, App, linkSpy } = factory;
+    const { trpc, linkSpy, trpcRender } = factory;
 
     function MyComponent() {
       const deletePostsMutation = trpc.useMutation(['deletePosts'], {
@@ -557,208 +490,147 @@ describe('useMutation()', () => {
       return <pre>{deletePostsMutation.isSuccess && '___FINISHED___'}</pre>;
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const utils = trpcRender(<MyComponent />);
+
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('___FINISHED___');
     });
 
+    // TODO: double check
     expect(linkSpy.up).toHaveBeenCalledTimes(1);
     expect(linkSpy.down).toHaveBeenCalledTimes(1);
     expect(linkSpy.up.mock.calls[0][0].context).toMatchObject({
       test: '1',
     });
   });
-});
 
-// test('useLiveQuery()', async () => {
-//   const { trpc, db, postLiveInputs, client } = factory;
-//   function MyComponent() {
-//     const postsQuery = trpc.useLiveQuery(['postsLive', {}]);
+  test('mutation on mount + subscribe for it', async () => {
+    const { trpc, trpcRender } = factory;
 
-//     return <pre>{JSON.stringify(postsQuery.data ?? null, null, 4)}</pre>;
-//   }
-//   function App() {
-//     const [queryClient] = useState(() => new QueryClient());
-//     return (
-//       <trpc.Provider {...{ queryClient, client }}>
-//         <QueryClientProvider client={queryClient}>
-//           <MyComponent />
-//         </QueryClientProvider>
-//       </trpc.Provider>
-//     );
-//   }
+    function MyComponent() {
+      const [posts, setPosts] = useState<Post[]>([]);
 
-//   const utils = render(<App />);
-//   await waitFor(() => {
-//     expect(utils.container).toHaveTextContent('first post');
-//   });
+      const addPosts = (newPosts?: Post[]) => {
+        setPosts((currentPosts) => {
+          const map: Record<Post['id'], Post> = {};
+          for (const msg of currentPosts ?? []) {
+            map[msg.id] = msg;
+          }
+          for (const msg of newPosts ?? []) {
+            map[msg.id] = msg;
+          }
+          return Object.values(map);
+        });
+      };
+      const input = posts.reduce(
+        (num, post) => Math.max(num, post.createdAt),
+        -1,
+      );
 
-//   for (let index = 0; index < 3; index++) {
-//     const title = `a new post index:${index}`;
-//     db.posts.push({
-//       id: `r${index}`,
-//       createdAt: 0,
-//       title,
-//     });
+      trpc.useSubscription(['newPosts', input], {
+        onNext(post) {
+          addPosts([post]);
+        },
+      });
 
-//     await waitFor(() => {
-//       expect(utils.container).toHaveTextContent(title);
-//     });
-//   }
+      const mutation = trpc.useMutation('addPost');
+      const mutate = mutation.mutate;
+      useEffect(() => {
+        if (posts.length === 2) {
+          mutate({ title: 'third post' });
+        }
+      }, [posts.length, mutate]);
 
-//   expect(utils.container.innerHTML).not.toContain('cursor');
-//   expect(postLiveInputs).toMatchInlineSnapshot(`
-//     Array [
-//       Object {
-//         "cursor": null,
-//       },
-//       Object {
-//         "cursor": "03bee962",
-//       },
-//       Object {
-//         "cursor": "712d2d40",
-//       },
-//       Object {
-//         "cursor": "7c5d7196",
-//       },
-//     ]
-//   `);
-// });
-test('dehydrate', async () => {
-  const { db, appRouter } = factory;
-  const ssg = createSSGHelpers({ router: appRouter, ctx: {} });
-
-  await ssg.prefetchQuery('allPosts');
-  await ssg.fetchQuery('postById', '1');
-
-  const dehydrated = ssg.dehydrate().queries;
-  expect(dehydrated).toHaveLength(2);
-
-  const [cache, cache2] = dehydrated;
-  expect(cache.queryHash).toMatchInlineSnapshot(`"[\\"allPosts\\"]"`);
-  expect(cache.queryKey).toMatchInlineSnapshot(`
-    Array [
-      "allPosts",
-    ]
-  `);
-  expect(cache.state.data).toEqual(db.posts);
-  expect(cache2.state.data).toMatchInlineSnapshot(`
-    Object {
-      "createdAt": 0,
-      "id": "1",
-      "title": "first post",
+      return <pre>{JSON.stringify(posts, null, 4)}</pre>;
     }
-  `);
-});
 
-test('prefetchQuery', async () => {
-  const { trpc, App } = factory;
-  function MyComponent() {
-    const [state, setState] = useState<string>('nope');
-    const utils = trpc.useContext();
-    const queryClient = useQueryClient();
+    const rendered = trpcRender(<MyComponent />);
 
-    useEffect(() => {
-      async function prefetch() {
-        await utils.prefetchQuery(['postById', '1']);
-        setState(JSON.stringify(dehydrate(queryClient)));
-      }
-      prefetch();
-    }, [queryClient, utils]);
-
-    return <>{JSON.stringify(state)}</>;
-  }
-
-  const utils = render(
-    <App>
-      <MyComponent />
-    </App>,
-  );
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
+    await waitFor(() => {
+      expect(rendered.container).toHaveTextContent('first post');
+    });
+    await waitFor(() => {
+      expect(rendered.container).toHaveTextContent('third post');
+    });
   });
 });
 
-test('useInfiniteQuery()', async () => {
-  const { trpc, App } = factory;
+describe('useInfiniteQuery', () => {
+  // TODO: better message?
+  test('useInfiniteQuery()', async () => {
+    const { trpc, trpcRender } = factory;
 
-  function MyComponent() {
-    const q = trpc.useInfiniteQuery(
-      [
-        'paginatedPosts',
+    function MyComponent() {
+      const q = trpc.useInfiniteQuery(
+        [
+          'paginatedPosts',
+          {
+            limit: 1,
+          },
+        ],
         {
-          limit: 1,
+          getNextPageParam: (lastPage) => lastPage.nextCursor,
         },
-      ],
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      },
-    );
-    expectTypeOf(q.data?.pages[0].items).toMatchTypeOf<undefined | Post[]>();
+      );
+      expectTypeOf(q.data?.pages[0].items).toMatchTypeOf<undefined | Post[]>();
 
-    return q.status === 'loading' ? (
-      <p>Loading...</p>
-    ) : q.status === 'error' ? (
-      <p>Error: {q.error.message}</p>
-    ) : (
-      <>
-        {q.data?.pages.map((group, i) => (
-          <Fragment key={i}>
-            {group.items.map((msg) => (
-              <Fragment key={msg.id}>
-                <div>{msg.title}</div>
-              </Fragment>
-            ))}
-          </Fragment>
-        ))}
-        <div>
-          <button
-            onClick={() => q.fetchNextPage()}
-            disabled={!q.hasNextPage || q.isFetchingNextPage}
-            data-testid="loadMore"
-          >
-            {q.isFetchingNextPage
-              ? 'Loading more...'
-              : q.hasNextPage
-              ? 'Load More'
-              : 'Nothing more to load'}
-          </button>
-        </div>
-        <div>
-          {q.isFetching && !q.isFetchingNextPage ? 'Fetching...' : null}
-        </div>
-      </>
-    );
-  }
+      return q.status === 'loading' ? (
+        <p>Loading...</p>
+      ) : q.status === 'error' ? (
+        <p>Error: {q.error.message}</p>
+      ) : (
+        <>
+          {q.data?.pages.map((group, i) => (
+            <Fragment key={i}>
+              {group.items.map((msg) => (
+                <Fragment key={msg.id}>
+                  <div>{msg.title}</div>
+                </Fragment>
+              ))}
+            </Fragment>
+          ))}
+          <div>
+            <button
+              onClick={() => q.fetchNextPage()}
+              disabled={!q.hasNextPage || q.isFetchingNextPage}
+              data-testid="loadMore"
+            >
+              {q.isFetchingNextPage
+                ? 'Loading more...'
+                : q.hasNextPage
+                ? 'Load More'
+                : 'Nothing more to load'}
+            </button>
+          </div>
+          <div>
+            {q.isFetching && !q.isFetchingNextPage ? 'Fetching...' : null}
+          </div>
+        </>
+      );
+    }
 
-  const utils = render(
-    <App>
-      <MyComponent />
-    </App>,
-  );
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-  });
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-    expect(utils.container).not.toHaveTextContent('second post');
-    expect(utils.container).toHaveTextContent('Load More');
-  });
-  userEvent.click(utils.getByTestId('loadMore'));
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('Loading more...');
-  });
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-    expect(utils.container).toHaveTextContent('second post');
-    expect(utils.container).toHaveTextContent('Nothing more to load');
-  });
+    const rendered = trpcRender(<MyComponent />);
+    await waitFor(() => {
+      expect(rendered.container).toHaveTextContent('first post');
+    });
+    await waitFor(() => {
+      expect(rendered.container).toHaveTextContent('first post');
+      expect(rendered.container).not.toHaveTextContent('second post');
+      expect(rendered.container).toHaveTextContent('Load More');
+    });
 
-  expect(utils.container).toMatchInlineSnapshot(`
+    userEvent.click(rendered.getByTestId('loadMore'));
+
+    await waitFor(() => {
+      expect(rendered.container).toHaveTextContent('Loading more...');
+    });
+    await waitFor(() => {
+      expect(rendered.container).toHaveTextContent('first post');
+      expect(rendered.container).toHaveTextContent('second post');
+      expect(rendered.container).toHaveTextContent('Nothing more to load');
+    });
+
+    expect(rendered.container).toMatchInlineSnapshot(`
     <div>
       <div>
         first post
@@ -777,143 +649,15 @@ test('useInfiniteQuery()', async () => {
       <div />
     </div>
   `);
-});
-
-test('useInfiniteQuery and prefetchInfiniteQuery', async () => {
-  const { trpc, App } = factory;
-
-  function MyComponent() {
-    const trpcContext = trpc.useContext();
-    const q = trpc.useInfiniteQuery(
-      [
-        'paginatedPosts',
-        {
-          limit: 1,
-        },
-      ],
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      },
-    );
-    expectTypeOf(q.data?.pages[0].items).toMatchTypeOf<undefined | Post[]>();
-
-    return q.status === 'loading' ? (
-      <p>Loading...</p>
-    ) : q.status === 'error' ? (
-      <p>Error: {q.error.message}</p>
-    ) : (
-      <>
-        {q.data?.pages.map((group, i) => (
-          <Fragment key={i}>
-            {group.items.map((msg) => (
-              <Fragment key={msg.id}>
-                <div>{msg.title}</div>
-              </Fragment>
-            ))}
-          </Fragment>
-        ))}
-        <div>
-          <button
-            onClick={() => q.fetchNextPage()}
-            disabled={!q.hasNextPage || q.isFetchingNextPage}
-            data-testid="loadMore"
-          >
-            {q.isFetchingNextPage
-              ? 'Loading more...'
-              : q.hasNextPage
-              ? 'Load More'
-              : 'Nothing more to load'}
-          </button>
-        </div>
-        <div>
-          <button
-            data-testid="prefetch"
-            onClick={() =>
-              trpcContext.prefetchInfiniteQuery([
-                'paginatedPosts',
-                { limit: 1 },
-              ])
-            }
-          >
-            Prefetch
-          </button>
-        </div>
-        <div>
-          {q.isFetching && !q.isFetchingNextPage ? 'Fetching...' : null}
-        </div>
-      </>
-    );
-  }
-
-  const utils = render(
-    <App>
-      <MyComponent />
-    </App>,
-  );
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
   });
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-    expect(utils.container).not.toHaveTextContent('second post');
-    expect(utils.container).toHaveTextContent('Load More');
-  });
-  userEvent.click(utils.getByTestId('loadMore'));
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('Loading more...');
-  });
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-    expect(utils.container).toHaveTextContent('second post');
-    expect(utils.container).toHaveTextContent('Nothing more to load');
-  });
-
-  expect(utils.container).toMatchInlineSnapshot(`
-    <div>
-      <div>
-        first post
-      </div>
-      <div>
-        second post
-      </div>
-      <div>
-        <button
-          data-testid="loadMore"
-          disabled=""
-        >
-          Nothing more to load
-        </button>
-      </div>
-      <div>
-        <button
-          data-testid="prefetch"
-        >
-          Prefetch
-        </button>
-      </div>
-      <div />
-    </div>
-  `);
-
-  userEvent.click(utils.getByTestId('prefetch'));
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('Fetching...');
-  });
-  await waitFor(() => {
-    expect(utils.container).not.toHaveTextContent('Fetching...');
-  });
-
-  // It should correctly fetch both pages
-  expect(utils.container).toHaveTextContent('first post');
-  expect(utils.container).toHaveTextContent('second post');
 });
 
 test('useInfiniteQuery and fetchInfiniteQuery', async () => {
-  const { trpc, App } = factory;
+  const { trpc, trpcRender } = factory;
 
   function MyComponent() {
     const trpcContext = trpc.useContext();
-    const q = trpc.useInfiniteQuery(
+    const paginatedPostsQuery = trpc.useInfiniteQuery(
       [
         'paginatedPosts',
         {
@@ -924,15 +668,18 @@ test('useInfiniteQuery and fetchInfiniteQuery', async () => {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
       },
     );
-    expectTypeOf(q.data?.pages[0].items).toMatchTypeOf<undefined | Post[]>();
 
-    return q.status === 'loading' ? (
+    expectTypeOf(paginatedPostsQuery.data?.pages[0].items).toMatchTypeOf<
+      undefined | Post[]
+    >();
+
+    return paginatedPostsQuery.status === 'loading' ? (
       <p>Loading...</p>
-    ) : q.status === 'error' ? (
-      <p>Error: {q.error.message}</p>
+    ) : paginatedPostsQuery.status === 'error' ? (
+      <p>Error: {paginatedPostsQuery.error.message}</p>
     ) : (
       <>
-        {q.data?.pages.map((group, i) => (
+        {paginatedPostsQuery.data?.pages.map((group, i) => (
           <Fragment key={i}>
             {group.items.map((msg) => (
               <Fragment key={msg.id}>
@@ -943,13 +690,16 @@ test('useInfiniteQuery and fetchInfiniteQuery', async () => {
         ))}
         <div>
           <button
-            onClick={() => q.fetchNextPage()}
-            disabled={!q.hasNextPage || q.isFetchingNextPage}
+            onClick={() => paginatedPostsQuery.fetchNextPage()}
+            disabled={
+              !paginatedPostsQuery.hasNextPage ||
+              paginatedPostsQuery.isFetchingNextPage
+            }
             data-testid="loadMore"
           >
-            {q.isFetchingNextPage
+            {paginatedPostsQuery.isFetchingNextPage
               ? 'Loading more...'
-              : q.hasNextPage
+              : paginatedPostsQuery.hasNextPage
               ? 'Load More'
               : 'Nothing more to load'}
           </button>
@@ -965,36 +715,38 @@ test('useInfiniteQuery and fetchInfiniteQuery', async () => {
           </button>
         </div>
         <div>
-          {q.isFetching && !q.isFetchingNextPage ? 'Fetching...' : null}
+          {paginatedPostsQuery.isFetching &&
+          !paginatedPostsQuery.isFetchingNextPage
+            ? 'Fetching...'
+            : null}
         </div>
       </>
     );
   }
 
-  const utils = render(
-    <App>
-      <MyComponent />
-    </App>,
-  );
+  const rendered = trpcRender(<MyComponent />);
+
   await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
+    expect(rendered.container).toHaveTextContent('first post');
   });
   await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-    expect(utils.container).not.toHaveTextContent('second post');
-    expect(utils.container).toHaveTextContent('Load More');
-  });
-  userEvent.click(utils.getByTestId('loadMore'));
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('Loading more...');
-  });
-  await waitFor(() => {
-    expect(utils.container).toHaveTextContent('first post');
-    expect(utils.container).toHaveTextContent('second post');
-    expect(utils.container).toHaveTextContent('Nothing more to load');
+    expect(rendered.container).toHaveTextContent('first post');
+    expect(rendered.container).not.toHaveTextContent('second post');
+    expect(rendered.container).toHaveTextContent('Load More');
   });
 
-  expect(utils.container).toMatchInlineSnapshot(`
+  userEvent.click(rendered.getByTestId('loadMore'));
+
+  await waitFor(() => {
+    expect(rendered.container).toHaveTextContent('Loading more...');
+  });
+  await waitFor(() => {
+    expect(rendered.container).toHaveTextContent('first post');
+    expect(rendered.container).toHaveTextContent('second post');
+    expect(rendered.container).toHaveTextContent('Nothing more to load');
+  });
+
+  expect(rendered.container).toMatchInlineSnapshot(`
     <div>
       <div>
         first post
@@ -1021,48 +773,32 @@ test('useInfiniteQuery and fetchInfiniteQuery', async () => {
     </div>
   `);
 
-  userEvent.click(utils.getByTestId('fetch'));
+  userEvent.click(rendered.getByTestId('fetch'));
+
   await waitFor(() => {
-    expect(utils.container).toHaveTextContent('Fetching...');
+    expect(rendered.container).toHaveTextContent('Fetching...');
   });
   await waitFor(() => {
-    expect(utils.container).not.toHaveTextContent('Fetching...');
+    expect(rendered.container).not.toHaveTextContent('Fetching...');
   });
 
   // It should correctly fetch both pages
-  expect(utils.container).toHaveTextContent('first post');
-  expect(utils.container).toHaveTextContent('second post');
+  expect(rendered.container).toHaveTextContent('first post');
+  expect(rendered.container).toHaveTextContent('second post');
 });
 
-test('prefetchInfiniteQuery()', async () => {
-  const { appRouter } = factory;
-  const ssg = createSSGHelpers({ router: appRouter, ctx: {} });
-
-  {
-    await ssg.prefetchInfiniteQuery('paginatedPosts', { limit: 1 });
-    const data = JSON.stringify(ssg.dehydrate());
-    expect(data).toContain('first post');
-    expect(data).not.toContain('second post');
-  }
-  {
-    await ssg.fetchInfiniteQuery('paginatedPosts', { limit: 2 });
-    const data = JSON.stringify(ssg.dehydrate());
-    expect(data).toContain('first post');
-    expect(data).toContain('second post');
-  }
-});
-
-describe('invalidate queries', () => {
-  test('queryClient.invalidateQueries()', async () => {
-    const { trpc, resolvers, App } = factory;
+describe('Query Invalidation', () => {
+  test('invalidateQueries()', async () => {
+    const { trpc, resolvers, trpcRender } = factory;
     function MyComponent() {
+      const queryClient = useQueryClient();
+
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         staleTime: Infinity,
       });
       const postByIdQuery = trpc.useQuery(['postById', '1'], {
         staleTime: Infinity,
       });
-      const queryClient = useQueryClient();
 
       return (
         <>
@@ -1085,32 +821,28 @@ describe('invalidate queries', () => {
       );
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:success');
-      expect(utils.container).toHaveTextContent('allPostsQuery:success');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:success');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:success');
 
-      expect(utils.container).toHaveTextContent('postByIdQuery:not-stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:not-stale');
     });
 
     expect(resolvers.allPosts).toHaveBeenCalledTimes(1);
     expect(resolvers.postById).toHaveBeenCalledTimes(1);
 
-    utils.getByTestId('refetch').click();
+    rendered.getByTestId('refetch').click();
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:stale');
     });
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:not-stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:not-stale');
     });
 
     expect(resolvers.allPosts).toHaveBeenCalledTimes(2);
@@ -1118,7 +850,7 @@ describe('invalidate queries', () => {
   });
 
   test('invalidateQuery()', async () => {
-    const { trpc, resolvers, App } = factory;
+    const { trpc, resolvers, trpcRender } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         staleTime: Infinity,
@@ -1148,39 +880,36 @@ describe('invalidate queries', () => {
       );
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:success');
-      expect(utils.container).toHaveTextContent('allPostsQuery:success');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:success');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:success');
 
-      expect(utils.container).toHaveTextContent('postByIdQuery:not-stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:not-stale');
     });
 
     expect(resolvers.allPosts).toHaveBeenCalledTimes(1);
     expect(resolvers.postById).toHaveBeenCalledTimes(1);
 
-    utils.getByTestId('refetch').click();
+    rendered.getByTestId('refetch').click();
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:stale');
     });
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:not-stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:not-stale');
     });
 
     expect(resolvers.allPosts).toHaveBeenCalledTimes(2);
     expect(resolvers.postById).toHaveBeenCalledTimes(2);
   });
+
   test('invalidateQueries()', async () => {
-    const { trpc, resolvers, App } = factory;
+    const { trpc, resolvers, trpcRender } = factory;
     function MyComponent() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         staleTime: Infinity,
@@ -1188,7 +917,9 @@ describe('invalidate queries', () => {
       const postByIdQuery = trpc.useQuery(['postById', '1'], {
         staleTime: Infinity,
       });
+
       const utils = trpc.useContext();
+
       return (
         <>
           <pre>
@@ -1210,41 +941,38 @@ describe('invalidate queries', () => {
       );
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:success');
-      expect(utils.container).toHaveTextContent('allPostsQuery:success');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:success');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:success');
 
-      expect(utils.container).toHaveTextContent('postByIdQuery:not-stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:not-stale');
     });
 
     expect(resolvers.allPosts).toHaveBeenCalledTimes(1);
     expect(resolvers.postById).toHaveBeenCalledTimes(1);
 
-    utils.getByTestId('refetch').click();
+    rendered.getByTestId('refetch').click();
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:stale');
     });
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('postByIdQuery:not-stale');
-      expect(utils.container).toHaveTextContent('allPostsQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('postByIdQuery:not-stale');
+      expect(rendered.container).toHaveTextContent('allPostsQuery:not-stale');
     });
 
     expect(resolvers.allPosts).toHaveBeenCalledTimes(2);
     expect(resolvers.postById).toHaveBeenCalledTimes(2);
   });
 
-  test('test invalidateQueries() with different args', async () => {
+  test('invalidateQueries() with different args', async () => {
     // ref  https://github.com/trpc/trpc/issues/1383
-    const { trpc, resolvers, App } = factory;
+    const { trpc, resolvers, trpcRender } = factory;
+
     function MyComponent() {
       const postByIdQuery = trpc.useQuery(['postById', '1'], {
         staleTime: Infinity,
@@ -1297,16 +1025,13 @@ describe('invalidate queries', () => {
       );
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const utils = trpcRender(<MyComponent />);
 
     await waitFor(() => {
       expect(utils.container).toHaveTextContent('postByIdQuery:success');
       expect(utils.container).toHaveTextContent('postByIdQuery:not-stale');
     });
+
     for (const testId of [
       'invalidate-1-string',
       'invalidate-2-tuple',
@@ -1332,8 +1057,10 @@ describe('invalidate queries', () => {
   });
 });
 
+// TODO: better place, double check
 test('formatError() react types test', async () => {
-  const { trpc, App } = factory;
+  const { trpc, trpcRender } = factory;
+
   function MyComponent() {
     const mutation = trpc.useMutation('addPost');
 
@@ -1353,6 +1080,7 @@ test('formatError() react types test', async () => {
           $test: string;
         }
       >();
+
       return (
         <pre data-testid="err">
           {JSON.stringify(mutation.error.shape.zodError, null, 2)}
@@ -1362,445 +1090,20 @@ test('formatError() react types test', async () => {
     return <></>;
   }
 
-  const utils = render(
-    <App>
-      <MyComponent />
-    </App>,
-  );
+  const rendered = trpcRender(<MyComponent />);
+
   await waitFor(() => {
-    expect(utils.container).toHaveTextContent('fieldErrors');
-    expect(utils.getByTestId('err').innerText).toMatchInlineSnapshot(
+    expect(rendered.container).toHaveTextContent('fieldErrors');
+    expect(rendered.getByTestId('err').innerText).toMatchInlineSnapshot(
       `undefined`,
     );
   });
 });
 
-// const MockApp: React.FC<any> = () => {
-//   return createElement('div');
-// };
-
-// const MockAppTree: React.FC<any> = () => {
-//   return createElement('div');
-// };
-
-describe('withTRPC()', () => {
-  test('useQuery', async () => {
-    // @ts-ignore
-    const { window } = global;
-
-    // @ts-ignore
-    delete global.window;
-    const { trpc, trpcClientOptions } = factory;
-    const App: AppType = () => {
-      const query = trpc.useQuery(['allPosts']);
-      return <>{JSON.stringify(query.data)}</>;
-    };
-
-    const Wrapped = withTRPC({
-      config: () => trpcClientOptions,
-      ssr: true,
-    })(App);
-
-    const props = await Wrapped.getInitialProps!({
-      AppTree: Wrapped,
-      Component: <div />,
-    } as any);
-
-    // @ts-ignore
-    global.window = window;
-
-    const utils = render(<Wrapped {...props} />);
-    expect(utils.container).toHaveTextContent('first post');
-  });
-
-  test('useInfiniteQuery', async () => {
-    const { window } = global;
-
-    // @ts-ignore
-    delete global.window;
-    const { trpc, trpcClientOptions } = factory;
-    const App: AppType = () => {
-      const query = trpc.useInfiniteQuery(
-        [
-          'paginatedPosts',
-          {
-            limit: 10,
-          },
-        ],
-        {
-          getNextPageParam: (lastPage) => lastPage.nextCursor,
-        },
-      );
-      return <>{JSON.stringify(query.data || query.error)}</>;
-    };
-
-    const Wrapped = withTRPC({
-      config: () => trpcClientOptions,
-      ssr: true,
-    })(App);
-
-    const props = await Wrapped.getInitialProps!({
-      AppTree: Wrapped,
-      Component: <div />,
-    } as any);
-
-    global.window = window;
-
-    const utils = render(<Wrapped {...props} />);
-    expect(utils.container).toHaveTextContent('first post');
-  });
-
-  test('browser render', async () => {
-    const { trpc, trpcClientOptions } = factory;
-    const App: AppType = () => {
-      const query = trpc.useQuery(['allPosts']);
-      return <>{JSON.stringify(query.data)}</>;
-    };
-
-    const Wrapped = withTRPC({
-      config: () => trpcClientOptions,
-      ssr: true,
-    })(App);
-
-    const props = await Wrapped.getInitialProps!({
-      AppTree: Wrapped,
-      Component: <div />,
-    } as any);
-
-    const utils = render(<Wrapped {...props} />);
-
-    await waitFor(() => {
-      expect(utils.container).toHaveTextContent('first post');
-    });
-  });
-
-  describe('`ssr: false` on query', () => {
-    test('useQuery()', async () => {
-      const { window } = global;
-
-      // @ts-ignore
-      delete global.window;
-      const { trpc, trpcClientOptions } = factory;
-      const App: AppType = () => {
-        const query = trpc.useQuery(['allPosts'], { ssr: false });
-        return <>{JSON.stringify(query.data)}</>;
-      };
-
-      const Wrapped = withTRPC({
-        config: () => trpcClientOptions,
-        ssr: true,
-      })(App);
-
-      const props = await Wrapped.getInitialProps!({
-        AppTree: Wrapped,
-        Component: <div />,
-      } as any);
-
-      global.window = window;
-
-      const utils = render(<Wrapped {...props} />);
-      expect(utils.container).not.toHaveTextContent('first post');
-
-      // should eventually be fetched
-      await waitFor(() => {
-        expect(utils.container).toHaveTextContent('first post');
-      });
-    });
-
-    test('useInfiniteQuery', async () => {
-      const { window } = global;
-
-      // @ts-ignore
-      delete global.window;
-      const { trpc, trpcClientOptions } = factory;
-      const App: AppType = () => {
-        const query = trpc.useInfiniteQuery(
-          [
-            'paginatedPosts',
-            {
-              limit: 10,
-            },
-          ],
-          {
-            getNextPageParam: (lastPage) => lastPage.nextCursor,
-            ssr: false,
-          },
-        );
-        return <>{JSON.stringify(query.data || query.error)}</>;
-      };
-
-      const Wrapped = withTRPC({
-        config: () => trpcClientOptions,
-        ssr: true,
-      })(App);
-
-      const props = await Wrapped.getInitialProps!({
-        AppTree: Wrapped,
-        Component: <div />,
-      } as any);
-
-      global.window = window;
-
-      const utils = render(<Wrapped {...props} />);
-      expect(utils.container).not.toHaveTextContent('first post');
-
-      // should eventually be fetched
-      await waitFor(() => {
-        expect(utils.container).toHaveTextContent('first post');
-      });
-    });
-  });
-
-  test('useQuery - ssr batching', async () => {
-    // @ts-ignore
-    const { window } = global;
-
-    // @ts-ignore
-    delete global.window;
-    const { trpc, trpcClientOptions, createContext } = factory;
-    const App: AppType = () => {
-      const query1 = trpc.useQuery(['postById', '1']);
-      const query2 = trpc.useQuery(['postById', '2']);
-      return <>{JSON.stringify([query1.data, query2.data])}</>;
-    };
-
-    const Wrapped = withTRPC({
-      config: () => trpcClientOptions,
-      ssr: true,
-    })(App);
-
-    const props = await Wrapped.getInitialProps!({
-      AppTree: Wrapped,
-      Component: <div />,
-    } as any);
-
-    // @ts-ignore
-    global.window = window;
-
-    const utils = render(<Wrapped {...props} />);
-    expect(utils.container).toHaveTextContent('first post');
-    expect(utils.container).toHaveTextContent('second post');
-
-    // confirm we've batched if createContext has only been called once
-    expect(createContext).toHaveBeenCalledTimes(1);
-  });
-
-  describe('`enabled: false` on query during ssr', () => {
-    describe('useQuery', () => {
-      test('queryKey does not change', async () => {
-        const { window } = global;
-
-        // @ts-ignore
-        delete global.window;
-        const { trpc, trpcClientOptions } = factory;
-        const App: AppType = () => {
-          const query1 = trpc.useQuery(['postById', '1']);
-          // query2 depends only on query1 status
-          const query2 = trpc.useQuery(['postById', '2'], {
-            enabled: query1.status === 'success',
-          });
-          return (
-            <>
-              <>{JSON.stringify(query1.data)}</>
-              <>{JSON.stringify(query2.data)}</>
-            </>
-          );
-        };
-
-        const Wrapped = withTRPC({
-          config: () => trpcClientOptions,
-          ssr: true,
-        })(App);
-
-        const props = await Wrapped.getInitialProps!({
-          AppTree: Wrapped,
-          Component: <div />,
-        } as any);
-
-        global.window = window;
-
-        const utils = render(<Wrapped {...props} />);
-
-        // when queryKey does not change query2 only fetched in the browser
-        expect(utils.container).toHaveTextContent('first post');
-        expect(utils.container).not.toHaveTextContent('second post');
-
-        await waitFor(() => {
-          expect(utils.container).toHaveTextContent('first post');
-          expect(utils.container).toHaveTextContent('second post');
-        });
-      });
-
-      test('queryKey changes', async () => {
-        const { window } = global;
-
-        // @ts-ignore
-        delete global.window;
-        const { trpc, trpcClientOptions } = factory;
-        const App: AppType = () => {
-          const query1 = trpc.useQuery(['postById', '1']);
-          // query2 depends on data fetched by query1
-          const query2 = trpc.useQuery(
-            [
-              'postById',
-              // workaround of TS requiring a string param
-              query1.data
-                ? (parseInt(query1.data.id) + 1).toString()
-                : 'definitely not a post id',
-            ],
-            {
-              enabled: !!query1.data,
-            },
-          );
-          return (
-            <>
-              <>{JSON.stringify(query1.data)}</>
-              <>{JSON.stringify(query2.data)}</>
-            </>
-          );
-        };
-
-        const Wrapped = withTRPC({
-          config: () => trpcClientOptions,
-          ssr: true,
-        })(App);
-
-        const props = await Wrapped.getInitialProps!({
-          AppTree: Wrapped,
-          Component: <div />,
-        } as any);
-
-        global.window = window;
-
-        const utils = render(<Wrapped {...props} />);
-
-        // when queryKey changes both queries are fetched on the server
-        expect(utils.container).toHaveTextContent('first post');
-        expect(utils.container).toHaveTextContent('second post');
-
-        await waitFor(() => {
-          expect(utils.container).toHaveTextContent('first post');
-          expect(utils.container).toHaveTextContent('second post');
-        });
-      });
-    });
-
-    describe('useInfiniteQuery', () => {
-      test('queryKey does not change', async () => {
-        const { window } = global;
-
-        // @ts-ignore
-        delete global.window;
-        const { trpc, trpcClientOptions } = factory;
-        const App: AppType = () => {
-          const query1 = trpc.useInfiniteQuery(
-            ['paginatedPosts', { limit: 1 }],
-            {
-              getNextPageParam: (lastPage) => lastPage.nextCursor,
-            },
-          );
-          // query2 depends only on query1 status
-          const query2 = trpc.useInfiniteQuery(
-            ['paginatedPosts', { limit: 2 }],
-            {
-              getNextPageParam: (lastPage) => lastPage.nextCursor,
-              enabled: query1.status === 'success',
-            },
-          );
-          return (
-            <>
-              <>{JSON.stringify(query1.data)}</>
-              <>{JSON.stringify(query2.data)}</>
-            </>
-          );
-        };
-
-        const Wrapped = withTRPC({
-          config: () => trpcClientOptions,
-          ssr: true,
-        })(App);
-
-        const props = await Wrapped.getInitialProps!({
-          AppTree: Wrapped,
-          Component: <div />,
-        } as any);
-
-        global.window = window;
-
-        const utils = render(<Wrapped {...props} />);
-
-        // when queryKey does not change query2 only fetched in the browser
-        expect(utils.container).toHaveTextContent('first post');
-        expect(utils.container).not.toHaveTextContent('second post');
-
-        await waitFor(() => {
-          expect(utils.container).toHaveTextContent('first post');
-          expect(utils.container).toHaveTextContent('second post');
-        });
-      });
-
-      test('queryKey changes', async () => {
-        const { window } = global;
-
-        // @ts-ignore
-        delete global.window;
-        const { trpc, trpcClientOptions } = factory;
-        const App: AppType = () => {
-          const query1 = trpc.useInfiniteQuery(
-            ['paginatedPosts', { limit: 1 }],
-            {
-              getNextPageParam: (lastPage) => lastPage.nextCursor,
-            },
-          );
-          // query2 depends on data fetched by query1
-          const query2 = trpc.useInfiniteQuery(
-            [
-              'paginatedPosts',
-              { limit: query1.data ? query1.data.pageParams.length + 1 : 0 },
-            ],
-            {
-              getNextPageParam: (lastPage) => lastPage.nextCursor,
-              enabled: query1.status === 'success',
-            },
-          );
-          return (
-            <>
-              <>{JSON.stringify(query1.data)}</>
-              <>{JSON.stringify(query2.data)}</>
-            </>
-          );
-        };
-
-        const Wrapped = withTRPC({
-          config: () => trpcClientOptions,
-          ssr: true,
-        })(App);
-
-        const props = await Wrapped.getInitialProps!({
-          AppTree: Wrapped,
-          Component: <div />,
-        } as any);
-
-        global.window = window;
-
-        const utils = render(<Wrapped {...props} />);
-
-        // when queryKey changes both queries are fetched on the server
-        expect(utils.container).toHaveTextContent('first post');
-        expect(utils.container).toHaveTextContent('second post');
-
-        await waitFor(() => {
-          expect(utils.container).toHaveTextContent('first post');
-          expect(utils.container).toHaveTextContent('second post');
-        });
-      });
-    });
-  });
-});
-
 describe('setQueryData()', () => {
   test('without & without callback', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
+
     function MyComponent() {
       const utils = trpc.useContext();
       const allPostsQuery = trpc.useQuery(['allPosts'], {
@@ -1852,24 +1155,21 @@ describe('setQueryData()', () => {
       );
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
 
-    utils.getByTestId('setQueryData').click();
+    rendered.getByTestId('setQueryData').click();
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('allPost.title');
-      expect(utils.container).toHaveTextContent('postById.title');
+      expect(rendered.container).toHaveTextContent('allPost.title');
+      expect(rendered.container).toHaveTextContent('postById.title');
     });
   });
 });
 
 describe('setInfiniteQueryData()', () => {
   test('with & without callback', async () => {
-    const { trpc, App } = factory;
+    const { trpc, trpcRender } = factory;
+
     function MyComponent() {
       const utils = trpc.useContext();
       const allPostsQuery = trpc.useInfiniteQuery(['paginatedPosts', {}], {
@@ -1938,66 +1238,13 @@ describe('setInfiniteQueryData()', () => {
       );
     }
 
-    const utils = render(
-      <App>
-        <MyComponent />
-      </App>,
-    );
+    const rendered = trpcRender(<MyComponent />);
 
-    utils.getByTestId('setInfiniteQueryData').click();
+    rendered.getByTestId('setInfiniteQueryData').click();
 
     await waitFor(() => {
-      expect(utils.container).toHaveTextContent('infinitePosts.title1');
-      expect(utils.container).toHaveTextContent('infinitePosts.title2');
+      expect(rendered.container).toHaveTextContent('infinitePosts.title1');
+      expect(rendered.container).toHaveTextContent('infinitePosts.title2');
     });
   });
-});
-
-/**
- * @link https://github.com/trpc/trpc/pull/1645
- */
-test('regression: SSR with error sets `status`=`error`', async () => {
-  // @ts-ignore
-  const { window } = global;
-
-  let queryState: any;
-  // @ts-ignore
-  delete global.window;
-  const { trpc, trpcClientOptions } = factory;
-  const App: AppType = () => {
-    const query1 = trpc.useQuery(['bad-useQuery'] as any);
-    const query2 = trpc.useInfiniteQuery(['bad-useInfiniteQuery'] as any);
-    queryState = {
-      query1: {
-        status: query1.status,
-        error: query1.error,
-      },
-      query2: {
-        status: query2.status,
-        error: query2.error,
-      },
-    };
-    return <>{JSON.stringify(query1.data || null)}</>;
-  };
-
-  const Wrapped = withTRPC({
-    config: () => trpcClientOptions,
-    ssr: true,
-  })(App);
-
-  await Wrapped.getInitialProps!({
-    AppTree: Wrapped,
-    Component: <div />,
-  } as any);
-
-  // @ts-ignore
-  global.window = window;
-  expect(queryState.query1.error).toMatchInlineSnapshot(
-    `[TRPCClientError: No "query"-procedure on path "bad-useQuery"]`,
-  );
-  expect(queryState.query2.error).toMatchInlineSnapshot(
-    `[TRPCClientError: No "query"-procedure on path "bad-useInfiniteQuery"]`,
-  );
-  expect(queryState.query1.status).toBe('error');
-  expect(queryState.query2.status).toBe('error');
 });
