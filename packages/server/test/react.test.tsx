@@ -21,7 +21,7 @@ import {
 import { z, ZodError } from 'zod';
 import { createReactQueryHooks, OutputWithCursor } from '../../react/src';
 import { DefaultErrorShape } from '../src';
-import { routerToServerAndClient } from './_testHelpers';
+import { routerToServerAndClient, expectType } from './_testHelpers';
 import {
   wsLink,
   createWSClient,
@@ -67,6 +67,11 @@ function createAppRouter() {
           error.cause instanceof ZodError ? error.cause.flatten() : null,
         ...shape,
       };
+    })
+    .query('ping', {
+      resolve() {
+        return 'pong' as const;
+      },
     })
     .query('allPosts', {
       resolve() {
@@ -139,9 +144,9 @@ function createAppRouter() {
         }
       },
     })
-    .mutation('PING', {
+    .mutation('ping', {
       resolve() {
-        return 'PONG' as const;
+        return 'pong' as const;
       },
     })
     .subscription('newPosts', {
@@ -179,6 +184,7 @@ function createAppRouter() {
     up: jest.fn(),
     down: jest.fn(),
   };
+
   const { client, trpcClientOptions, close } = routerToServerAndClient(
     appRouter,
     {
@@ -222,14 +228,25 @@ function createAppRouter() {
   const queryClient = new QueryClient();
   const trpc = createReactQueryHooks<typeof appRouter>();
 
-  function trpcRender(component: ReactElement) {
-    return render(
-      <trpc.Provider {...{ queryClient, client }}>
+  function App(props: { children: ReactElement }) {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    return (
+      <trpc.Provider queryClient={queryClient} client={client}>
         <QueryClientProvider client={queryClient}>
-          {component}
+          {props.children}
         </QueryClientProvider>
-      </trpc.Provider>,
+      </trpc.Provider>
     );
+  }
+
+  function trpcRender(component: ReactElement) {
+    return render(<App>{component}</App>);
   }
 
   return {
@@ -252,6 +269,7 @@ function createAppRouter() {
 }
 
 let factory: ReturnType<typeof createAppRouter>;
+
 beforeEach(() => {
   factory = createAppRouter();
 });
@@ -260,47 +278,35 @@ afterEach(() => {
   factory.close();
 });
 
-export const expectType = <T,>(_: T): void => undefined;
-
 describe('useQuery', () => {
-  it('should infer the return type currectly', () => {});
-  test('no input', async () => {
-    const { trpc, trpcRender } = factory;
+  it('should infer the return type currectly', () => {
+    const { trpc } = factory;
 
-    function MyComponent() {
+    // @ts-ignore
+    // eslint-disable-next-line
+    function Component() {
+      const pingQuery = trpc.useQuery(['ping']);
+      expectType<'pong' | undefined>(pingQuery.data);
+
       const allPostsQuery = trpc.useQuery(['allPosts']);
-
-      expectType<Post[]>(allPostsQuery.data!);
-      // expectTypeOf(allPostsQuery.data!).toMatchTypeOf<Post[]>();
-      return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
+      expectType<Post[] | undefined>(allPostsQuery.data);
     }
-
-    const rendered = trpcRender(<MyComponent />);
-
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('first post');
-    });
   });
 
-  it('should allow to specify context', async () => {
+  it('should support setting context in query options', async () => {
     const { trpc, linkSpy, trpcRender } = factory;
 
-    function MyComponent() {
+    function Component() {
       const allPostsQuery = trpc.useQuery(['allPosts'], {
         context: {
           test: '1',
         },
       });
 
-      expectTypeOf(allPostsQuery.data!).toMatchTypeOf<Post[]>();
       return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
     }
 
-    const rendered = trpcRender(<MyComponent />);
-
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('first post');
-    });
+    trpcRender(<Component />);
 
     expect(linkSpy.up).toHaveBeenCalledTimes(1);
     expect(linkSpy.down).toHaveBeenCalledTimes(1);
@@ -309,173 +315,133 @@ describe('useQuery', () => {
     });
   });
 
-  test('with input', async () => {
+  it('should handle input correctly', async () => {
     const { trpc, trpcRender } = factory;
 
-    function MyComponent() {
-      const allPostsQuery = trpc.useQuery(['paginatedPosts', { limit: 1 }]);
-      return <pre>{JSON.stringify(allPostsQuery.data ?? 'n/a', null, 4)}</pre>;
+    let posts: Post[];
+
+    function Component() {
+      const paginatedPostsQuery = trpc.useQuery([
+        'paginatedPosts',
+        { limit: 1 },
+      ]);
+
+      posts = paginatedPostsQuery.data?.items!;
+
+      return (
+        <pre>{JSON.stringify(paginatedPostsQuery.data ?? 'n/a', null, 4)}</pre>
+      );
     }
 
-    const rendered = trpcRender(<MyComponent />);
+    trpcRender(<Component />);
 
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('first post');
-    });
-
-    expect(rendered.container).not.toHaveTextContent('second post');
+    await waitFor(() => expect(posts.length).toBe(1));
   });
 });
 
 describe('useMutation', () => {
-  test('call procedure with no input with null/undefined', async () => {
+  it('should accept null/undefined for a mutation with no input', async () => {
     const { trpc, trpcRender } = factory;
 
     const results: unknown[] = [];
-    function MyComponent() {
-      const mutation = trpc.useMutation('PING');
-      const [finished, setFinished] = useState(false);
+
+    function Component() {
+      const mutation = trpc.useMutation('ping');
 
       useEffect(() => {
         (async () => {
-          await new Promise((resolve) =>
-            mutation.mutate(null, {
-              onSettled: resolve,
-            }),
-          );
-          await new Promise((resolve) =>
-            mutation.mutate(undefined, {
-              onSettled: resolve,
-            }),
-          );
+          mutation.mutate(null);
+          mutation.mutate(undefined);
 
           await mutation.mutateAsync(null);
           await mutation.mutateAsync(undefined);
-
-          setFinished(true);
         })();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
 
       useEffect(() => {
         results.push(mutation.data);
       }, [mutation.data]);
 
-      return (
-        <pre>
-          {JSON.stringify(mutation.data ?? {}, null, 4)}
-          {finished && '__IS_FINISHED__'}
-        </pre>
-      );
+      return <pre>{JSON.stringify(mutation.data ?? {}, null, 4)}</pre>;
     }
 
-    const rendered = trpcRender(<MyComponent />);
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('__IS_FINISHED__');
-    });
+    trpcRender(<Component />);
 
-    // expect(results).toMatchInlineSnapshot();
+    await waitFor(() => {
+      expect(results).toHaveLength(4);
+    });
   });
 
-  test('nullish input called with no input', async () => {
+  it('can be called with no input when it is optional', async () => {
     const { trpc, trpcRender } = factory;
 
-    function MyComponent() {
+    function Component() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
-      const deletePostsMutation = trpc.useMutation('deletePosts');
+      const deleteAllPostsMutation = trpc.useMutation('deletePosts');
 
       useEffect(() => {
         allPostsQuery.refetch().then(async (allPosts) => {
           expect(allPosts.data).toHaveLength(2);
-          await deletePostsMutation.mutateAsync();
+          await deleteAllPostsMutation.mutateAsync();
           const newAllPost = await allPostsQuery.refetch();
           expect(newAllPost.data).toHaveLength(0);
         });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
 
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    const rendered = trpcRender(<MyComponent />);
-
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('first post');
-    });
-
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('[]');
-    });
+    trpcRender(<Component />);
   });
 
-  // TODO: i think it shouldn't exist
-  test('useMutation([path]) tuple', async () => {
+  it('should accept an array as its key', async () => {
     const { trpc, trpcRender } = factory;
 
-    function MyComponent() {
+    function Component() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
-      const deletePostsMutation = trpc.useMutation(['deletePosts']);
+      const deleteAllPostsMutation = trpc.useMutation(['deletePosts']);
 
       useEffect(() => {
         allPostsQuery.refetch().then(async (allPosts) => {
           expect(allPosts.data).toHaveLength(2);
-          await deletePostsMutation.mutateAsync();
+          await deleteAllPostsMutation.mutateAsync();
           const newAllPost = await allPostsQuery.refetch();
           expect(newAllPost.data).toHaveLength(0);
         });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
 
       return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
     }
 
-    const utils = trpcRender(<MyComponent />);
-
-    await waitFor(() => {
-      expect(utils.container).toHaveTextContent('first post');
-    });
-    await waitFor(() => {
-      expect(utils.container).toHaveTextContent('[]');
-    });
+    trpcRender(<Component />);
   });
 
-  // TODO: better message
-  test('nullish input called with input', async () => {
+  it('should accept input when it is optional', async () => {
     const { trpc, trpcRender } = factory;
 
-    function MyComponent() {
+    function Component() {
       const allPostsQuery = trpc.useQuery(['allPosts']);
-      const deletePostsMutation = trpc.useMutation('deletePosts');
+      const deleteAllPostsMutation = trpc.useMutation('deletePosts');
 
       useEffect(() => {
         allPostsQuery.refetch().then(async (allPosts) => {
           expect(allPosts.data).toHaveLength(2);
-          await deletePostsMutation.mutateAsync(['1']);
+          await deleteAllPostsMutation.mutateAsync(['1']);
           const newAllPost = await allPostsQuery.refetch();
           expect(newAllPost.data).toHaveLength(1);
         });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
 
-      return <pre>{JSON.stringify(allPostsQuery.data ?? {}, null, 4)}</pre>;
+      return <pre>Status: {deleteAllPostsMutation.status}</pre>;
     }
 
-    const utils = trpcRender(<MyComponent />);
-
-    await waitFor(() => {
-      expect(utils.container).toHaveTextContent('first post');
-      expect(utils.container).toHaveTextContent('second post');
-    });
-    await waitFor(() => {
-      expect(utils.container).not.toHaveTextContent('first post');
-      expect(utils.container).toHaveTextContent('second post');
-    });
+    trpcRender(<Component />);
   });
 
-  test('useMutation with context', async () => {
+  it('should handle context correctly', async () => {
     const { trpc, linkSpy, trpcRender } = factory;
 
-    function MyComponent() {
+    function Component() {
       const deletePostsMutation = trpc.useMutation(['deletePosts'], {
         context: {
           test: '1',
@@ -484,74 +450,68 @@ describe('useMutation', () => {
 
       useEffect(() => {
         deletePostsMutation.mutate();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
       }, []);
 
-      return <pre>{deletePostsMutation.isSuccess && '___FINISHED___'}</pre>;
+      return <pre>Status: {deletePostsMutation.status}</pre>;
     }
 
-    const utils = trpcRender(<MyComponent />);
+    trpcRender(<Component />);
 
-    await waitFor(() => {
-      expect(utils.container).toHaveTextContent('___FINISHED___');
-    });
-
-    // TODO: double check
     expect(linkSpy.up).toHaveBeenCalledTimes(1);
     expect(linkSpy.down).toHaveBeenCalledTimes(1);
     expect(linkSpy.up.mock.calls[0][0].context).toMatchObject({
       test: '1',
     });
   });
+});
 
-  test('mutation on mount + subscribe for it', async () => {
-    const { trpc, trpcRender } = factory;
+it('should successfully subscribe to a mutation', async () => {
+  const { trpc, trpcRender } = factory;
 
-    function MyComponent() {
-      const [posts, setPosts] = useState<Post[]>([]);
+  function Component() {
+    const [posts, setPosts] = useState<Post[]>([]);
 
-      const addPosts = (newPosts?: Post[]) => {
-        setPosts((currentPosts) => {
-          const map: Record<Post['id'], Post> = {};
-          for (const msg of currentPosts ?? []) {
-            map[msg.id] = msg;
-          }
-          for (const msg of newPosts ?? []) {
-            map[msg.id] = msg;
-          }
-          return Object.values(map);
-        });
-      };
-      const input = posts.reduce(
-        (num, post) => Math.max(num, post.createdAt),
-        -1,
-      );
-
-      trpc.useSubscription(['newPosts', input], {
-        onNext(post) {
-          addPosts([post]);
-        },
-      });
-
-      const mutation = trpc.useMutation('addPost');
-      const mutate = mutation.mutate;
-      useEffect(() => {
-        if (posts.length === 2) {
-          mutate({ title: 'third post' });
+    const addPosts = (newPosts?: Post[]) => {
+      setPosts((currentPosts) => {
+        const map: Record<Post['id'], Post> = {};
+        for (const msg of currentPosts ?? []) {
+          map[msg.id] = msg;
         }
-      }, [posts.length, mutate]);
+        for (const msg of newPosts ?? []) {
+          map[msg.id] = msg;
+        }
+        return Object.values(map);
+      });
+    };
+    const input = posts.reduce(
+      (num, post) => Math.max(num, post.createdAt),
+      -1,
+    );
 
-      return <pre>{JSON.stringify(posts, null, 4)}</pre>;
-    }
-
-    const rendered = trpcRender(<MyComponent />);
-
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('first post');
+    trpc.useSubscription(['newPosts', input], {
+      onNext(post) {
+        addPosts([post]);
+      },
     });
-    await waitFor(() => {
-      expect(rendered.container).toHaveTextContent('third post');
-    });
+
+    const mutation = trpc.useMutation('addPost');
+    const mutate = mutation.mutate;
+    useEffect(() => {
+      if (posts.length === 2) {
+        mutate({ title: 'third post' });
+      }
+    }, [posts.length, mutate]);
+
+    return <pre>{JSON.stringify(posts, null, 4)}</pre>;
+  }
+
+  const rendered = trpcRender(<Component />);
+
+  await waitFor(() => {
+    expect(rendered.container).toHaveTextContent('first post');
+  });
+  await waitFor(() => {
+    expect(rendered.container).toHaveTextContent('third post');
   });
 });
 
