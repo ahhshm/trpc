@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import devalue from 'devalue';
 import superjson from 'superjson';
-import { z } from 'zod';
 import {
   createWSClient,
   TRPCWebSocketClient,
@@ -14,93 +13,103 @@ import * as trpc from '../src';
 import { routerToServerAndClient, waitError } from './_testHelpers';
 import { httpLink } from '../../client/src/links/httpLink';
 import fetch from 'node-fetch';
+import { z } from 'zod';
+
+function createMockRouterWithTransformer<Context>(
+  transformer: trpc.DataTransformerOptions,
+) {
+  const resolverMock = jest.fn();
+  const router = trpc
+    .router<Context>()
+    .transformer(transformer)
+    .query('err', {
+      resolve() {
+        throw new Error('woop');
+      },
+    })
+    .query('ping', {
+      resolve() {
+        resolverMock();
+        return 'pong';
+      },
+    })
+    .mutation('ping', {
+      resolve() {
+        resolverMock();
+        return 'pong';
+      },
+    })
+    .query('withStringInput', {
+      input: z.string(),
+      resolve({ input }) {
+        resolverMock(input);
+        return input;
+      },
+    })
+    .query('withDateInput', {
+      input: z.date(),
+      resolve({ input }) {
+        resolverMock(input);
+        return input;
+      },
+    });
+
+  return { router, resolverMock };
+}
+
+function Factory() {
+  const { router, resolverMock } = createMockRouterWithTransformer();
+}
+
+// let factory
 
 test('superjson up and down', async () => {
   const transformer = superjson;
+  const { router, resolverMock } = createMockRouterWithTransformer(transformer);
 
   const date = new Date();
-  const fn = jest.fn();
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('hello', {
-        input: z.date(),
-        resolve({ input }) {
-          fn(input);
-          return input;
-        },
-      }),
-    {
-      client: { transformer },
-    },
-  );
-  const res = await client.query('hello', date);
+  const { client, close } = routerToServerAndClient(router, {
+    client: { transformer },
+  });
+  const res = await client.query('withDateInput', date);
   expect(res.getTime()).toBe(date.getTime());
-  expect((fn.mock.calls[0][0] as Date).getTime()).toBe(date.getTime());
+  expect((resolverMock.mock.calls[0][0] as Date).getTime()).toBe(
+    date.getTime(),
+  );
 
   close();
 });
 
 test('empty superjson up and down', async () => {
   const transformer = superjson;
+  const { router } = createMockRouterWithTransformer(transformer);
 
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('empty-up', {
-        resolve() {
-          return 'hello world';
-        },
-      })
-      .query('empty-down', {
-        input: z.string(),
-        resolve() {
-          return 'hello world';
-        },
-      }),
-    {
-      client: { transformer },
-    },
-  );
-  const res1 = await client.query('empty-up');
-  expect(res1).toBe('hello world');
-  const res2 = await client.query('empty-down', '');
-  expect(res2).toBe('hello world');
+  const { client, close } = routerToServerAndClient(router, {
+    client: { transformer },
+  });
+  const res1 = await client.query('ping');
+  expect(res1).toBe('pong');
+  const res2 = await client.query('withStringInput', 'hello');
+  expect(res2).toBe('hello');
 
   close();
 });
 
 test('wsLink: empty superjson up and down', async () => {
   const transformer = superjson;
+  const { router } = createMockRouterWithTransformer(transformer);
+
   let ws: any = null;
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('empty-up', {
-        resolve() {
-          return 'hello world';
-        },
-      })
-      .query('empty-down', {
-        input: z.string(),
-        resolve() {
-          return 'hello world';
-        },
-      }),
-    {
-      client({ wssUrl }) {
-        ws = createWSClient({ url: wssUrl });
-        return { transformer, links: [wsLink({ client: ws })] };
-      },
+  const { client, close } = routerToServerAndClient(router, {
+    client({ wssUrl }) {
+      ws = createWSClient({ url: wssUrl });
+      return { transformer, links: [wsLink({ client: ws })] };
     },
-  );
-  const res1 = await client.query('empty-up');
-  expect(res1).toBe('hello world');
-  const res2 = await client.query('empty-down', '');
-  expect(res2).toBe('hello world');
+  });
+  const res1 = await client.query('ping');
+  expect(res1).toBe('pong');
+  const res2 = await client.query('withStringInput', 'hello');
+  expect(res2).toBe('hello');
 
   close();
   ws.close();
@@ -111,27 +120,18 @@ test('devalue up and down', async () => {
     serialize: (object) => devalue(object),
     deserialize: (object) => eval(`(${object})`),
   };
+  const { router, resolverMock } = createMockRouterWithTransformer(transformer);
 
   const date = new Date();
-  const fn = jest.fn();
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('hello', {
-        input: z.date(),
-        resolve({ input }) {
-          fn(input);
-          return input;
-        },
-      }),
-    {
-      client: { transformer },
-    },
-  );
-  const res = await client.query('hello', date);
+  const { client, close } = routerToServerAndClient(router, {
+    client: { transformer },
+  });
+
+  const res = await client.query('withDateInput', date);
   expect(res.getTime()).toBe(date.getTime());
-  expect((fn.mock.calls[0][0] as Date).getTime()).toBe(date.getTime());
+  expect((resolverMock.mock.calls[0][0] as Date).getTime()).toBe(
+    date.getTime(),
+  );
 
   close();
 });
@@ -144,30 +144,20 @@ test('not batching: superjson up and devalue down', async () => {
       deserialize: (object) => eval(`(${object})`),
     },
   };
+  const { router, resolverMock } = createMockRouterWithTransformer(transformer);
 
   const date = new Date();
-  const fn = jest.fn();
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('hello', {
-        input: z.date(),
-        resolve({ input }) {
-          fn(input);
-          return input;
-        },
-      }),
-    {
-      client: ({ httpUrl }) => ({
-        transformer,
-        links: [httpLink({ url: httpUrl })],
-      }),
-    },
-  );
-  const res = await client.query('hello', date);
+  const { client, close } = routerToServerAndClient(router, {
+    client: ({ httpUrl }) => ({
+      transformer,
+      links: [httpLink({ url: httpUrl })],
+    }),
+  });
+  const res = await client.query('withDateInput', date);
   expect(res.getTime()).toBe(date.getTime());
-  expect((fn.mock.calls[0][0] as Date).getTime()).toBe(date.getTime());
+  expect((resolverMock.mock.calls[0][0] as Date).getTime()).toBe(
+    date.getTime(),
+  );
 
   close();
 });
@@ -180,30 +170,20 @@ test('batching: superjson up and devalue down', async () => {
       deserialize: (object) => eval(`(${object})`),
     },
   };
+  const { router, resolverMock } = createMockRouterWithTransformer(transformer);
 
   const date = new Date();
-  const fn = jest.fn();
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('hello', {
-        input: z.date(),
-        resolve({ input }) {
-          fn(input);
-          return input;
-        },
-      }),
-    {
-      client: ({ httpUrl }) => ({
-        transformer,
-        links: [httpBatchLink({ url: httpUrl })],
-      }),
-    },
-  );
-  const res = await client.query('hello', date);
+  const { client, close } = routerToServerAndClient(router, {
+    client: ({ httpUrl }) => ({
+      transformer,
+      links: [httpBatchLink({ url: httpUrl })],
+    }),
+  });
+  const res = await client.query('withDateInput', date);
   expect(res.getTime()).toBe(date.getTime());
-  expect((fn.mock.calls[0][0] as Date).getTime()).toBe(date.getTime());
+  expect((resolverMock.mock.calls[0][0] as Date).getTime()).toBe(
+    date.getTime(),
+  );
 
   close();
 });
@@ -216,83 +196,62 @@ test('batching: superjson up and devalue down', async () => {
       deserialize: (object) => eval(`(${object})`),
     },
   };
+  const { router, resolverMock } = createMockRouterWithTransformer(transformer);
 
   const date = new Date();
-  const fn = jest.fn();
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('hello', {
-        input: z.date(),
-        resolve({ input }) {
-          fn(input);
-          return input;
-        },
-      }),
-    {
-      client: ({ httpUrl }) => ({
-        transformer,
-        links: [httpBatchLink({ url: httpUrl })],
-      }),
-    },
-  );
-  const res = await client.query('hello', date);
+  const { client, close } = routerToServerAndClient(router, {
+    client: ({ httpUrl }) => ({
+      transformer,
+      links: [httpBatchLink({ url: httpUrl })],
+    }),
+  });
+  const res = await client.query('withDateInput', date);
   expect(res.getTime()).toBe(date.getTime());
-  expect((fn.mock.calls[0][0] as Date).getTime()).toBe(date.getTime());
+  expect((resolverMock.mock.calls[0][0] as Date).getTime()).toBe(
+    date.getTime(),
+  );
 
   close();
 });
 
 test('all transformers running in correct order', async () => {
-  const world = 'foo';
-  const fn = jest.fn();
+  const transformerMock = jest.fn();
 
   const transformer: trpc.CombinedDataTransformer = {
     input: {
       serialize: (object) => {
-        fn('client:serialized');
+        transformerMock('client:serialized');
         return object;
       },
       deserialize: (object) => {
-        fn('server:deserialized');
+        transformerMock('server:deserialized');
         return object;
       },
     },
     output: {
       serialize: (object) => {
-        fn('server:serialized');
+        transformerMock('server:serialized');
         return object;
       },
       deserialize: (object) => {
-        fn('client:deserialized');
+        transformerMock('client:deserialized');
         return object;
       },
     },
   };
 
-  const { client, close } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('hello', {
-        input: z.string(),
-        resolve({ input }) {
-          fn(input);
-          return input;
-        },
-      }),
-    {
-      client: { transformer },
-    },
-  );
-  const res = await client.query('hello', world);
-  expect(res).toBe(world);
-  expect(fn.mock.calls[0][0]).toBe('client:serialized');
-  expect(fn.mock.calls[1][0]).toBe('server:deserialized');
-  expect(fn.mock.calls[2][0]).toBe(world);
-  expect(fn.mock.calls[3][0]).toBe('server:serialized');
-  expect(fn.mock.calls[4][0]).toBe('client:deserialized');
+  const { router, resolverMock } = createMockRouterWithTransformer(transformer);
+
+  const { client, close } = routerToServerAndClient(router, {
+    client: { transformer },
+  });
+  const res = await client.query('withStringInput', 'hello');
+  expect(res).toBe('hello');
+  expect(resolverMock.mock.calls[0][0]).toBe('hello');
+  expect(transformerMock.mock.calls[0][0]).toBe('client:serialized');
+  expect(transformerMock.mock.calls[1][0]).toBe('server:deserialized');
+  expect(transformerMock.mock.calls[2][0]).toBe('server:serialized');
+  expect(transformerMock.mock.calls[3][0]).toBe('client:deserialized');
 
   close();
 });
@@ -300,63 +259,46 @@ test('all transformers running in correct order', async () => {
 describe('transformer on router', () => {
   test('http', async () => {
     const transformer = superjson;
+    const { router, resolverMock } =
+      createMockRouterWithTransformer(transformer);
 
     const date = new Date();
-    const fn = jest.fn();
-    const { client, close } = routerToServerAndClient(
-      trpc
-        .router()
-        .transformer(transformer)
-        .query('hello', {
-          input: z.date(),
-          resolve({ input }) {
-            fn(input);
-            return input;
-          },
-        }),
-      {
-        client: { transformer },
-      },
-    );
-    const res = await client.query('hello', date);
+    const { client, close } = routerToServerAndClient(router, {
+      client: { transformer },
+    });
+    const res = await client.query('withDateInput', date);
     expect(res.getTime()).toBe(date.getTime());
-    expect((fn.mock.calls[0][0] as Date).getTime()).toBe(date.getTime());
+    expect((resolverMock.mock.calls[0][0] as Date).getTime()).toBe(
+      date.getTime(),
+    );
 
     close();
   });
 
   test('ws', async () => {
     let wsClient: TRPCWebSocketClient = null as any;
-    const date = new Date();
-    const fn = jest.fn();
     const transformer = superjson;
-    const { client, close } = routerToServerAndClient(
-      trpc
-        .router()
-        .transformer(transformer)
-        .query('hello', {
-          input: z.date(),
-          resolve({ input }) {
-            fn(input);
-            return input;
-          },
-        }),
-      {
-        client({ wssUrl }) {
-          wsClient = createWSClient({
-            url: wssUrl,
-          });
-          return {
-            transformer,
-            links: [wsLink({ client: wsClient })],
-          };
-        },
-      },
-    );
+    const date = new Date();
+    const { router, resolverMock } =
+      createMockRouterWithTransformer(transformer);
 
-    const res = await client.query('hello', date);
+    const { client, close } = routerToServerAndClient(router, {
+      client({ wssUrl }) {
+        wsClient = createWSClient({
+          url: wssUrl,
+        });
+        return {
+          transformer,
+          links: [wsLink({ client: wsClient })],
+        };
+      },
+    });
+
+    const res = await client.query('withDateInput', date);
     expect(res.getTime()).toBe(date.getTime());
-    expect((fn.mock.calls[0][0] as Date).getTime()).toBe(date.getTime());
+    expect((resolverMock.mock.calls[0][0] as Date).getTime()).toBe(
+      date.getTime(),
+    );
 
     wsClient.close();
     close();
@@ -379,31 +321,17 @@ describe('transformer on router', () => {
       },
     };
 
-    class MyError extends Error {
-      constructor(message: string) {
-        super(message);
-        Object.setPrototypeOf(this, MyError.prototype);
-      }
-    }
+    const { router } = createMockRouterWithTransformer(transformer);
+
     const onError = jest.fn();
-    const { client, close } = routerToServerAndClient(
-      trpc
-        .router()
-        .transformer(transformer)
-        .query('err', {
-          resolve() {
-            throw new MyError('woop');
-          },
-        }),
-      {
-        server: {
-          onError,
-        },
-        client: {
-          transformer,
-        },
+    const { client, close } = routerToServerAndClient(router, {
+      server: {
+        onError,
       },
-    );
+      client: {
+        transformer,
+      },
+    });
     const clientError = await waitError(client.query('err'), TRPCClientError);
     expect(clientError.shape.message).toMatchInlineSnapshot(`"woop"`);
     expect(clientError.shape.code).toMatchInlineSnapshot(`-32603`);
@@ -415,7 +343,7 @@ describe('transformer on router', () => {
     if (!(serverError instanceof TRPCError)) {
       throw new Error('Wrong error');
     }
-    expect(serverError.cause).toBeInstanceOf(MyError);
+    expect(serverError.cause).toBeInstanceOf(Error);
 
     close();
   });
@@ -423,23 +351,12 @@ describe('transformer on router', () => {
 
 test('superjson - no input', async () => {
   const transformer = superjson;
+  const { router } = createMockRouterWithTransformer(transformer);
 
-  const fn = jest.fn();
-  const { close, httpUrl } = routerToServerAndClient(
-    trpc
-      .router()
-      .transformer(transformer)
-      .query('hello', {
-        async resolve({ input }) {
-          fn(input);
-          return 'world';
-        },
-      }),
-    {
-      client: { transformer },
-    },
-  );
-  const json = await (await fetch(`${httpUrl}/hello`)).json();
+  const { close, httpUrl } = routerToServerAndClient(router, {
+    client: { transformer },
+  });
+  const json = await (await fetch(`${httpUrl}/ping`)).json();
 
   expect(json).not.toHaveProperty('error');
   expect(json).toMatchInlineSnapshot(`
@@ -447,7 +364,7 @@ Object {
   "id": null,
   "result": Object {
     "data": Object {
-      "json": "world",
+      "json": "pong",
     },
     "type": "data",
   },

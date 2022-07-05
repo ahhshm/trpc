@@ -1,21 +1,21 @@
 /* eslint-disable @typescript-eslint/ban-types */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import './_packages';
+import { CreateTRPCClientOptions, createTRPCClient } from '@trpc/client';
+import {
+  TRPCWebSocketClient,
+  WebSocketClientOptions,
+  createWSClient,
+} from '@trpc/client/links/wsLink';
+import { AnyRouter } from '@trpc/server';
 import AbortController from 'abort-controller';
 import fetch from 'node-fetch';
 import ws from 'ws';
-import { createTRPCClient, CreateTRPCClientOptions } from '../../client/src';
-import { applyWSSHandler } from '../src/adapters/ws';
-import { WSSHandlerOptions } from '../src/ws';
-import {
-  createWSClient,
-  TRPCWebSocketClient,
-  WebSocketClientOptions,
-} from '../../client/src/links/wsLink';
-import { AnyRouter } from '../src';
 import {
   CreateHTTPHandlerOptions,
   createHTTPServer,
 } from '../src/adapters/standalone';
+import { WSSHandlerOptions, applyWSSHandler } from '../src/adapters/ws';
 
 (global as any).fetch = fetch;
 (global as any).AbortController = AbortController;
@@ -134,3 +134,8 @@ export async function waitError<TError = Error>(
   }
   throw new Error('Function did not throw');
 }
+
+/**
+ * Assert the parameter is of a specific type.
+ */
+export const expectType = <T>(_: T): void => undefined;

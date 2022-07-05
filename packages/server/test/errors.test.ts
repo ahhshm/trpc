@@ -10,27 +10,15 @@ import { getMessageFromUnkownError } from '../src/internals/errors';
 import { TRPCError } from '../src/TRPCError';
 import { routerToServerAndClient, waitError } from './_testHelpers';
 import { CreateHTTPContextOptions } from '../adapters/standalone';
+import { createMockRouter } from './_mockRouters';
 
 test('basic', async () => {
-  class MyError extends Error {
-    constructor(message: string) {
-      super(message);
-      Object.setPrototypeOf(this, MyError.prototype);
-    }
-  }
   const onError = jest.fn();
-  const { client, close } = routerToServerAndClient(
-    trpc.router().query('err', {
-      resolve() {
-        throw new MyError('woop');
-      },
-    }),
-    {
-      server: {
-        onError,
-      },
+  const { client, close } = routerToServerAndClient(createMockRouter().router, {
+    server: {
+      onError,
     },
-  );
+  });
   const clientError = await waitError(client.query('err'), TRPCClientError);
   expect(clientError.shape.message).toMatchInlineSnapshot(`"woop"`);
   expect(clientError.shape.code).toMatchInlineSnapshot(`-32603`);
@@ -42,27 +30,19 @@ test('basic', async () => {
   if (!(serverError instanceof TRPCError)) {
     throw new Error('Wrong error');
   }
-  expect(serverError.originalError).toBeInstanceOf(MyError);
-  expect(serverError.cause).toBeInstanceOf(MyError);
+  expect(serverError.originalError).toBeInstanceOf(Error);
+  expect(serverError.cause).toBeInstanceOf(Error);
 
   close();
 });
 
 test('input error', async () => {
   const onError = jest.fn();
-  const { client, close } = routerToServerAndClient(
-    trpc.router().mutation('err', {
-      input: z.string(),
-      resolve() {
-        return null;
-      },
-    }),
-    {
-      server: {
-        onError,
-      },
+  const { client, close } = routerToServerAndClient(createMockRouter().router, {
+    server: {
+      onError,
     },
-  );
+  });
   const clientError = await waitError(
     client.mutation('err', 1 as any),
     TRPCClientError,
